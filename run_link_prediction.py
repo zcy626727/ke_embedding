@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import torch
-from transformers import AutoConfig, AutoTokenizer, HfArgumentParser, TrainingArguments, set_seed
+from transformers import AutoConfig, AutoTokenizer, HfArgumentParser,TrainingArguments, set_seed
 
 from model.bert_model import BertPoolingForTripletPrediction
 from model.trainer import KGCTrainer
@@ -88,6 +88,8 @@ def main():
         data_collator=data_collator,
         train_dataset=train_data,
         eval_dataset=dev_data,
+        
+        # compute_metrics=compute_metrics
     )
     if data_args.group_shuffle:
         print('using group shuffle')
@@ -102,16 +104,16 @@ def main():
         trainer.save_model()
         tokenizer.save_pretrained(training_args.output_dir)
     results = {}
-    # if training_args.do_eval:
-    #     eval_output = trainer.evaluate()
-    #     result = {'eval_losses': eval_output['eval_losses']}
-    #     output_eval_file = os.path.join(training_args.output_dir, 'eval_results_lm.txt')
-    #     with open(output_eval_file, 'w') as writer:
-    #             logger.info('***** Eval results *****')
-    #             for key in sorted(result.keys()):
-    #                 logger.info('  %s = %s', key, str(result[key]))
-    #                 writer.write('%s = %s\n' % (key, str(result[key])))
-    #     results.update(result)
+    if training_args.do_eval:
+        eval_output = trainer.evaluate()
+        result = {'eval_loss': eval_output['eval_loss']}
+        output_eval_file = os.path.join(training_args.output_dir, 'eval_results_lm.txt')
+        with open(output_eval_file, 'w') as writer:
+                logger.info('***** Eval results *****')
+                for key in sorted(result.keys()):
+                    logger.info('  %s = %s', key, str(result[key]))
+                    writer.write('%s = %s\n' % (key, str(result[key])))
+        results.update(result)
     if training_args.do_predict:
         prediction_begin_time = time.time()
         trainer.model.set_predict_mode()

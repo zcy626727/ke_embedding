@@ -11,7 +11,7 @@ from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from tqdm.auto import tqdm
 from transformers import Trainer
 from transformers.trainer import SequentialDistributedSampler
-from transformers.trainer_utils import EvalPrediction, PredictionOutput
+from transformers.trainer_utils import EvalLoopOutput, EvalPrediction
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,6 @@ class GroupRandomSampler(Sampler):
 
 
 class GroupDistributredSampler(DistributedSampler):
-
     def __init__(self, dataset, group_size, num_replicas=None, rank=None, shuffle=True, seed=0):
         self.group_size = group_size
         assert len(
@@ -148,13 +147,15 @@ class KGCTrainer(Trainer):
                 RandomSampler(self.train_dataset)
             )
 
-    def _prediction_loop(
+    def prediction_loop(
         self,
         dataloader: DataLoader,
         description: str,
-        prediction_loss_only: Optional[bool] = None
-    ) -> PredictionOutput:
-        prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else self.prediction_loss_only
+        prediction_loss_only: Optional[bool] = None,
+        ignore_keys: Optional[List[str]] = None,
+        metric_key_prefix: str = "eval",
+    ) -> EvalLoopOutput:
+        prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else self.args.prediction_loss_only
         model = self.model
         if self.args.n_gpu > 1:
             model = torch.nn.DataParallel(model)
@@ -170,7 +171,7 @@ class KGCTrainer(Trainer):
         model.eval()
         if self.args.past_index >= 0:
             past = None
-        for inputs in tqdm(dataloader, desc=description, disable=not self.is_local_master()):
+        for inputs in tqdm(dataloader, desc=description, disable=False):
             has_labels = any((inputs.get(k) is not None for k in ['labels', 'lm_labels', 'masked_lm_labels']))
             for (k, v) in inputs.items():
                 if isinstance(v, torch.Tensor):
@@ -200,13 +201,17 @@ class KGCTrainer(Trainer):
             preds = preds.cpu().numpy()
         if label_ids is not None:
             label_ids = label_ids.cpu().numpy()
+
+        num_examples = self.num_examples(dataloader)
+
         if self.compute_metrics is not None and preds is not None and (label_ids is not None):
             metrics = self.compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
+                
         else:
             metrics = {}
         if len(eval_losses) > 0:
-            metrics['eval_loss'] = np.mean(eval_losses)
+            metrics[f"{metric_key_prefix}_loss"] = np.mean(eval_losses)
         for key in list(metrics.keys()):
             if not key.startswith('eval_'):
                 metrics[f'eval_{key}'] = metrics.pop(key)
-        return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
+        return EvalLoopOutput(predictions=preds, label_ids=label_ids, metrics=metrics,num_samples=num_examples)
